@@ -7,6 +7,25 @@ import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { TextBlock } from '../../types/messages.js'
 
 describe('AgentPrinter', () => {
+  describe('processEvent', () => {
+    describe('beforeInvocationEvent', () => {
+      it('prints agent starting message', async () => {
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+
+        const outputs: string[] = []
+        const mockAppender = (text: string) => outputs.push(text)
+
+        const agent = new Agent({ model, printer: false })
+        ;(agent as any)._printer = new AgentPrinter(mockAppender)
+
+        await collectGenerator(agent.stream('Test'))
+
+        const allOutput = outputs.join('')
+        expect(allOutput).toBe('Agent starting...\nHello')
+      })
+    })
+  })
+
   describe('end-to-end scenarios', () => {
     it('prints simple text output', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello world' })
@@ -20,7 +39,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('Hello world')
+      expect(allOutput).toBe('Agent starting...\nHello world')
     })
 
     it('prints reasoning content wrapped in tags', async () => {
@@ -35,7 +54,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('\n💭 Reasoning:\n   Let me think\n')
+      expect(allOutput).toBe('Agent starting...\n\n💭 Reasoning:\n   Let me think\n')
     })
 
     it('prints text and reasoning together', async () => {
@@ -53,7 +72,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('Answer: \n💭 Reasoning:\n   thinking\n')
+      expect(allOutput).toBe('Agent starting...\nAnswer: \n💭 Reasoning:\n   thinking\n')
     })
 
     it('handles newlines in reasoning content', async () => {
@@ -71,7 +90,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      const expected = `
+      const expected = `Agent starting...\n
 💭 Reasoning:
    First line
    Second line
@@ -101,7 +120,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('\n🔧 Tool #1: calc\n✓ Tool completed\nResult: 4')
+      expect(allOutput).toBe('Agent starting...\n\n🔧 Tool #1: calc\n✓ Tool completed\nResult: 4')
     })
 
     it('prints tool error', async () => {
@@ -125,7 +144,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('\n🔧 Tool #1: bad_tool\n✗ Tool failed\nError handled')
+      expect(allOutput).toBe('Agent starting...\n\n🔧 Tool #1: bad_tool\n✗ Tool failed\nError handled')
     })
 
     it('prints comprehensive scenario with all output types', async () => {
@@ -168,7 +187,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      const expected = `Let me help you. 
+      const expected = `Agent starting...\nLet me help you. 
 💭 Reasoning:
    I need to use the calculator
 

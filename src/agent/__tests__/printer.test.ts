@@ -20,7 +20,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('Agent starting...\nHello world')
+      expect(allOutput).toBe('Hello world')
     })
 
     it('prints reasoning content wrapped in tags', async () => {
@@ -35,7 +35,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('Agent starting...\n\n💭 Reasoning:\n   Let me think\n')
+      expect(allOutput).toBe('\n💭 Reasoning:\n   Let me think\n')
     })
 
     it('prints text and reasoning together', async () => {
@@ -53,7 +53,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('Agent starting...\nAnswer: \n💭 Reasoning:\n   thinking\n')
+      expect(allOutput).toBe('Answer: \n💭 Reasoning:\n   thinking\n')
     })
 
     it('handles newlines in reasoning content', async () => {
@@ -71,7 +71,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      const expected = `Agent starting...\n
+      const expected = `
 💭 Reasoning:
    First line
    Second line
@@ -101,7 +101,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('Agent starting...\n\n🔧 Tool #1: calc\n✓ Tool completed\nResult: 4')
+      expect(allOutput).toBe('\n🔧 Tool #1: calc\n✓ Tool completed\nResult: 4')
     })
 
     it('prints tool error', async () => {
@@ -125,7 +125,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      expect(allOutput).toBe('Agent starting...\n\n🔧 Tool #1: bad_tool\n✗ Tool failed\nError handled')
+      expect(allOutput).toBe('\n🔧 Tool #1: bad_tool\n✗ Tool failed\nError handled')
     })
 
     it('prints comprehensive scenario with all output types', async () => {
@@ -168,7 +168,7 @@ describe('AgentPrinter', () => {
       await collectGenerator(agent.stream('Test'))
 
       const allOutput = outputs.join('')
-      const expected = `Agent starting...\nLet me help you. 
+      const expected = `Let me help you. 
 💭 Reasoning:
    I need to use the calculator
 

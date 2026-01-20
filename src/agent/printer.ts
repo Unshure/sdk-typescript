@@ -65,10 +65,6 @@ export class AgentPrinter implements Printer {
    */
   public processEvent(event: AgentStreamEvent): void {
     switch (event.type) {
-      case 'beforeInvocationEvent':
-        this.write('Agent starting...\n')
-        break
-
       case 'modelContentBlockDeltaEvent':
         this.handleContentBlockDelta(event)
         break

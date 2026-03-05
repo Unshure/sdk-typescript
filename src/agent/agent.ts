@@ -41,12 +41,14 @@ import {
   BeforeToolsEvent,
   HookableEvent,
   MessageAddedEvent,
+  MessageUpdatedEvent,
   ModelStreamUpdateEvent,
   ContentBlockEvent,
   ModelMessageEvent,
   ToolResultEvent,
   AgentResultEvent,
   ToolStreamUpdateEvent,
+  type ModelStopData,
 } from '../hooks/events.js'
 import { createStructuredOutputContext } from '../structured-output/context.js'
 import { StructuredOutputException } from '../structured-output/exceptions.js'
@@ -486,7 +488,10 @@ export class Agent implements AgentData {
           
           // Handle user content redaction if guardrails blocked input
           if (modelResult.redactionMessage) {
-            this._redactLastMessage(modelResult.redactionMessage)
+            const redactionEvent = this._redactLastMessage(modelResult.redactionMessage)
+            if (redactionEvent) {
+              yield redactionEvent
+            }
           }
 
           if (modelResult.stopReason !== 'toolUse') {
@@ -642,11 +647,7 @@ export class Agent implements AgentData {
   private async *invokeModel(
     args?: InvokeArgs,
     forcedToolChoice?: ToolChoice
-  ): AsyncGenerator<
-    AgentStreamEvent,
-    { message: Message; stopReason: StopReason; redactionMessage?: string },
-    undefined
-  > {
+  ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     // Normalize input and append messages to conversation
     const messagesToAppend = this._normalizeInput(args)
     for (const message of messagesToAppend) {
@@ -686,12 +687,10 @@ export class Agent implements AgentData {
 
       yield new ModelMessageEvent({ agent: this, message, stopReason })
 
-      const stopData: { message: Message; stopReason: StopReason; redactionMessage?: string } = {
-        message: message,
-        stopReason: stopReason,
-      }
-      if (redactionMessage !== undefined) {
-        stopData.redactionMessage = redactionMessage
+      const stopData: ModelStopData = {
+        message,
+        stopReason,
+        ...(redactionMessage && { redaction: { message: redactionMessage } }),
       }
 
       const afterModelCallEvent = new AfterModelCallEvent({ agent: this, stopData })
@@ -701,7 +700,7 @@ export class Agent implements AgentData {
         return yield* this.invokeModel(args)
       }
 
-      return { message, stopReason, redactionMessage: stopData.redactionMessage ?? ""}  // < Fix this
+      return { message, stopReason, metadata, redactionMessage }
     } catch (error) {
       const modelError = normalizeError(error)
 
@@ -924,19 +923,23 @@ export class Agent implements AgentData {
    * Called when guardrails block user input and redaction is enabled.
    *
    * @param redactMessage - The redaction message to replace the content with
+   * @returns MessageUpdatedEvent to be yielded, or undefined if no message to redact
    */
-  private _redactLastMessage(redactMessage: string): void {
+  private _redactLastMessage(redactMessage: string): MessageUpdatedEvent | undefined {
     // Find and redact the last message
     const lastIndex = this.messages.length - 1
     if (lastIndex >= 0) {
       const lastMessage = this.messages[lastIndex]
       if (lastMessage) {
-        this.messages[lastIndex] = new Message({
+        const updatedMessage = new Message({
           role: lastMessage.role,
           content: [new TextBlock(redactMessage)],
         })
+        this.messages[lastIndex] = updatedMessage
+        return new MessageUpdatedEvent({ agent: this, message: updatedMessage, index: lastIndex })
       }
     }
+    return undefined
   }
 
   /**

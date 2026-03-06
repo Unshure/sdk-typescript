@@ -99,6 +99,21 @@ const DEFAULT_REDACT_OUTPUT_MESSAGE = '[Assistant output redacted.]'
 
 /**
  * Configuration for Bedrock guardrails.
+ *
+ * **Session Persistence Considerations:**
+ *
+ * When using SessionManager with guardrails, redacted messages are persisted based on
+ * the `saveLatestOn` strategy:
+ * - `'invocation'` (default): Redacted messages are saved at the end of each invocation.
+ *   If the process crashes during invocation, un-redacted content may remain in storage.
+ * - `'message'`: Redacted messages are saved immediately when MessageUpdatedEvent fires,
+ *   providing the most durable protection for sensitive content.
+ * - `'trigger'`: Redaction is only saved when the trigger condition fires or via manual
+ *   saveSnapshot calls.
+ *
+ * For production use with sensitive content, consider using `saveLatestOn: 'message'`
+ * to ensure redactions are persisted immediately.
+ *
  * @see https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
  */
 export interface GuardrailConfig {
@@ -125,6 +140,8 @@ export interface GuardrailConfig {
 
   /**
    * Redact user input when guardrail blocks it.
+   * When undefined or true, user input will be redacted.
+   * Set to false to disable user input redaction.
    * @defaultValue true
    */
   redactInput?: boolean
@@ -137,6 +154,8 @@ export interface GuardrailConfig {
 
   /**
    * Redact assistant output when guardrail blocks it.
+   * When undefined or false, assistant output will not be redacted.
+   * Set to true to enable assistant output redaction.
    * @defaultValue false
    */
   redactOutput?: boolean
@@ -1305,6 +1324,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns True if any blocked guardrail is detected
    */
   private _hasBlockedGuardrail(guardrailData: unknown): boolean {
+    // Validate guardrail data structure before processing
+    if (!guardrailData || typeof guardrailData !== 'object') {
+      logger.warn('guardrail_data=<invalid> | Invalid guardrail data received from trace')
+      return false
+    }
     return this._findDetectedAndBlockedPolicy(guardrailData)
   }
 

@@ -56,6 +56,7 @@ import type { SessionManager } from '../session/session-manager.js'
 import { Tracer } from '../telemetry/tracer.js'
 import type { Usage } from '../models/streaming.js'
 import type { AttributeValue } from '@opentelemetry/api'
+import { logger } from '../logging/logger.js'
 
 /**
  * Recursive type definition for nested tool arrays.
@@ -944,6 +945,11 @@ export class Agent implements AgentData {
         })
         this.messages[lastIndex] = updatedMessage
         return new MessageUpdatedEvent({ agent: this, message: updatedMessage, index: lastIndex })
+      } else if (lastMessage) {
+        // Unexpected state: redaction requested but last message is not from user
+        logger.warn(
+          `role=<${lastMessage.role}> | Received user input redaction but last message is not from user. Redaction skipped.`
+        )
       }
     }
     return undefined

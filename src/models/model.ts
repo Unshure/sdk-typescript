@@ -356,7 +356,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               // Update assistant message directly with redacted content
               contentBlocks.length = 0
               contentBlocks.push(new TextBlock(event.redactAssistantContentMessage))
-              if (messageRole && stoppedMessage) {
+              if (messageRole) {
                 stoppedMessage = new Message({
                   role: messageRole,
                   content: [...contentBlocks],

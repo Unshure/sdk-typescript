@@ -9,21 +9,22 @@ on:
       test-file:
         description: 'Test file to run'
         required: true
-        default: 'telemetry-browser-hang.test.ts'
+        default: 'notebook-minimal.test.ts'
         type: choice
         options:
+          - notebook-minimal.test.ts
           - telemetry-browser-hang.test.ts
           - notebook.test.ts
           - models/bedrock.test.ts
       iterations:
         description: 'Number of times to run the test'
         required: true
-        default: '5'
+        default: '10'
         type: string
       timeout:
-        description: 'Vitest test timeout in seconds (use 90+ for notebook tests)'
+        description: 'Vitest test timeout in seconds (30s for simple tests, 90s for notebook)'
         required: true
-        default: '90'
+        default: '30'
         type: string
       disable-telemetry:
         description: 'Disable OpenTelemetry'
@@ -47,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false # Continue even if one iteration fails
       matrix:
-        iteration: [1, 2, 3, 4, 5]
+        iteration: [1, 2]  # Run 2 parallel jobs at a time
 
     steps:
       - name: Checkout code

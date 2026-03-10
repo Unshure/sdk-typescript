@@ -21,9 +21,9 @@ on:
         default: '5'
         type: string
       timeout:
-        description: 'Test timeout in seconds'
+        description: 'Vitest test timeout in seconds (use 90+ for notebook tests)'
         required: true
-        default: '60'
+        default: '90'
         type: string
       disable-telemetry:
         description: 'Disable OpenTelemetry'
@@ -99,8 +99,9 @@ jobs:
 
           START_TIME=$(date +%s)
 
-          # Run the test with timeout and capture output
-          timeout ${{ inputs.timeout || '60' }}s npm run test:integ:browser -- ${{ steps.config.outputs.test-file }} --testTimeout=${{ steps.config.outputs.timeout }} 2>&1 | tee test-output-${{ matrix.iteration }}.log
+          # Run the test and capture output
+          # Note: We rely on Vitest's --testTimeout, not bash timeout wrapper
+          npm run test:integ:browser -- ${{ steps.config.outputs.test-file }} --testTimeout=${{ steps.config.outputs.timeout }} 2>&1 | tee test-output-${{ matrix.iteration }}.log
 
           TEST_EXIT_CODE=${PIPESTATUS[0]}
           END_TIME=$(date +%s)

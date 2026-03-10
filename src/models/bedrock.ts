@@ -38,6 +38,7 @@ import {
   type CitationLocation as BedrockCitationLocation,
   type Citation as BedrockCitation,
   type CitationsContentBlock as BedrockCitationsContentBlock,
+  type GuardrailTraceAssessment,
 } from '@aws-sdk/client-bedrock-runtime'
 import { type BaseModelConfig, Model, type StreamOptions } from '../models/model.js'
 import type { ContentBlock, Message, StopReason, ToolUseBlock } from '../types/messages.js'
@@ -86,6 +87,59 @@ const STOP_REASON_MAP = {
   content_filtered: 'contentFiltered',
   guardrail_intervened: 'guardrailIntervened',
 } as const
+
+/**
+ * Default message for redacted input.
+ */
+const DEFAULT_REDACT_INPUT_MESSAGE = '[User input redacted.]'
+
+/**
+ * Default message for redacted output.
+ */
+const DEFAULT_REDACT_OUTPUT_MESSAGE = '[Assistant output redacted.]'
+
+/**
+ * Redaction configuration for guardrails.
+ * Controls whether and how blocked content is replaced.
+ */
+export interface GuardrailRedactionConfig {
+  /** Redact input when blocked. @defaultValue true */
+  input?: boolean
+
+  /** Replacement message for redacted input. @defaultValue '[User input redacted.]' */
+  inputMessage?: string
+
+  /** Redact output when blocked. @defaultValue false */
+  output?: boolean
+
+  /** Replacement message for redacted output. @defaultValue '[Assistant output redacted.]' */
+  outputMessage?: string
+}
+
+/**
+ * Configuration for Bedrock guardrails.
+ *
+ * For production use with sensitive content, consider `SessionManager` with `saveLatestOn: 'message'`
+ * to persist redactions immediately.
+ *
+ * @see https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
+ */
+export interface GuardrailConfig {
+  /** Guardrail identifier */
+  guardrailIdentifier: string
+
+  /** Guardrail version (e.g., "1", "DRAFT") */
+  guardrailVersion: string
+
+  /** Trace mode for evaluation. @defaultValue 'enabled' */
+  trace?: 'enabled' | 'disabled' | 'enabled_full'
+
+  /** Stream processing mode */
+  streamProcessingMode?: 'sync' | 'async'
+
+  /** Redaction behavior when content is blocked */
+  redaction?: GuardrailRedactionConfig
+}
 
 /**
  * Converts a snake_case string to camelCase.
@@ -186,6 +240,12 @@ export interface BedrockModelConfig extends BaseModelConfig {
    * - `'auto'`: Automatically determine based on model ID (default)
    */
   includeToolResultStatus?: 'auto' | boolean
+
+  /**
+   * Guardrail configuration for content filtering and safety controls.
+   * @see https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
+   */
+  guardrailConfig?: GuardrailConfig
 }
 
 /**
@@ -494,6 +554,18 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     // Add additional args (spread them into the request for forward compatibility)
     if (this._config.additionalArgs) {
       Object.assign(request, this._config.additionalArgs)
+    }
+
+    // Add guardrail configuration
+    if (this._config.guardrailConfig) {
+      request.guardrailConfig = {
+        guardrailIdentifier: this._config.guardrailConfig.guardrailIdentifier,
+        guardrailVersion: this._config.guardrailConfig.guardrailVersion,
+        trace: this._config.guardrailConfig.trace ?? 'enabled',
+        ...(this._config.guardrailConfig.streamProcessingMode && {
+          streamProcessingMode: this._config.guardrailConfig.streamProcessingMode,
+        }),
+      }
     }
 
     return request
@@ -864,6 +936,22 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       }
     }
 
+    // Handle trace and guardrail check for non-streaming responses
+    if (event.trace) {
+      metadataEvent.trace = event.trace
+
+      // Check for blocked guardrails and emit redaction events
+      if (
+        this._config.guardrailConfig &&
+        event.trace.guardrail &&
+        this._findDetectedAndBlockedPolicy(event.trace.guardrail)
+      ) {
+        for (const redactionEvent of this._generateRedactionEvents(event.trace.guardrail)) {
+          events.push(redactionEvent)
+        }
+      }
+    }
+
     events.push(metadataEvent)
 
     return events
@@ -1023,6 +1111,17 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
         if (data.trace) {
           event.trace = data.trace
+
+          // Check for blocked guardrails in trace and emit redaction events
+          if (
+            this._config.guardrailConfig &&
+            data.trace.guardrail &&
+            this._findDetectedAndBlockedPolicy(data.trace.guardrail)
+          ) {
+            for (const redactionEvent of this._generateRedactionEvents(data.trace.guardrail)) {
+              events.push(redactionEvent)
+            }
+          }
         }
 
         events.push(event)
@@ -1188,6 +1287,104 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       default:
         return location as unknown as BedrockCitationLocation
     }
+  }
+
+  /**
+   * Checks if guardrail trace contains any blocked policies.
+   *
+   * @param guardrailData - Guardrail trace assessment data
+   * @returns True if any policy action is BLOCKED
+   */
+  private _findDetectedAndBlockedPolicy(guardrailData: GuardrailTraceAssessment): boolean {
+    // Check input assessment
+    if (guardrailData.inputAssessment) {
+      for (const assessment of Object.values(guardrailData.inputAssessment)) {
+        if (this._hasBlockedAction(assessment)) {
+          return true
+        }
+      }
+    }
+
+    // Check output assessments
+    if (guardrailData.outputAssessments) {
+      for (const assessments of Object.values(guardrailData.outputAssessments)) {
+        // Handle both single assessment and array of assessments
+        const assessmentArray = Array.isArray(assessments) ? assessments : [assessments]
+        if (assessmentArray.some((assessment) => this._hasBlockedAction(assessment))) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * Recursively checks if an object contains action: 'BLOCKED'.
+   *
+   * @param obj - Object to search for blocked action
+   * @returns True if any nested property has action: 'BLOCKED'
+   */
+  private _hasBlockedAction(obj: unknown): boolean {
+    if (obj === null || typeof obj !== 'object') {
+      return false
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.some((item) => this._hasBlockedAction(item))
+    }
+
+    const record = obj as Record<string, unknown>
+
+    // Check if this object has action: 'BLOCKED'
+    if (record.action === 'BLOCKED') {
+      return true
+    }
+
+    // Recursively check all nested values
+    return Object.values(record).some((value) => this._hasBlockedAction(value))
+  }
+
+  /**
+   * Generate redaction events based on guardrail configuration.
+   *
+   * @param guardrailData - The guardrail trace assessment data
+   * @returns Array of redaction events to emit
+   */
+  private _generateRedactionEvents(guardrailData: GuardrailTraceAssessment): ModelStreamEvent[] {
+    const events: ModelStreamEvent[] = []
+    const redaction = this._config.guardrailConfig?.redaction
+
+    // Default: redact input is true unless explicitly set to false
+    if (redaction?.input !== false) {
+      logger.debug('redacting input due to guardrail')
+      events.push({
+        type: 'modelRedactEvent',
+        inputRedaction: {
+          message: redaction?.inputMessage ?? DEFAULT_REDACT_INPUT_MESSAGE,
+        },
+      })
+    }
+
+    // Only redact output if explicitly enabled
+    if (redaction?.output) {
+      logger.debug('redacting output due to guardrail')
+      const outputRedactionEvent: ModelStreamEvent = {
+        type: 'modelRedactEvent',
+        outputRedaction: {
+          message: redaction?.outputMessage ?? DEFAULT_REDACT_OUTPUT_MESSAGE,
+        },
+      }
+
+      // Include the original model output if available
+      if (guardrailData.modelOutput && guardrailData.modelOutput.length > 0) {
+        outputRedactionEvent.outputRedaction!.redactedContent = guardrailData.modelOutput.join('')
+      }
+
+      events.push(outputRedactionEvent)
+    }
+
+    return events
   }
 }
 

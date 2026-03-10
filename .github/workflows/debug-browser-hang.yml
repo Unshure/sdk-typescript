@@ -1,0 +1,268 @@
+name: Debug Browser Hang
+
+# This workflow is designed to reproduce and debug the flaky browser test timeouts
+# Run it multiple times to catch the intermittent failures
+
+on:
+  workflow_dispatch:
+    inputs:
+      test-file:
+        description: 'Test file to run'
+        required: true
+        default: 'telemetry-browser-hang.test.ts'
+        type: choice
+        options:
+          - telemetry-browser-hang.test.ts
+          - notebook.test.ts
+          - models/bedrock.test.ts
+      iterations:
+        description: 'Number of times to run the test'
+        required: true
+        default: '5'
+        type: string
+      timeout:
+        description: 'Test timeout in seconds'
+        required: true
+        default: '60'
+        type: string
+      disable-telemetry:
+        description: 'Disable OpenTelemetry'
+        required: true
+        default: false
+        type: boolean
+  push:
+    branches:
+      - 'debug/**'
+      - 'test/browser-hang'
+
+jobs:
+  debug-browser-tests:
+    name: Debug Browser Tests (Iteration ${{ matrix.iteration }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      fail-fast: false # Continue even if one iteration fails
+      matrix:
+        iteration: [1, 2, 3, 4, 5]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm run test:browser:install
+
+      - name: Build the package
+        run: npm run build
+
+      - name: Set test configuration
+        id: config
+        run: |
+          TEST_FILE="${{ inputs.test-file || 'telemetry-browser-hang.test.ts' }}"
+          TIMEOUT="${{ inputs.timeout || '60' }}"
+          echo "test-file=${TEST_FILE}" >> $GITHUB_OUTPUT
+          echo "timeout=${TIMEOUT}000" >> $GITHUB_OUTPUT
+          echo "disable-telemetry=${{ inputs.disable-telemetry || 'false' }}" >> $GITHUB_OUTPUT
+
+      - name: Run browser test (Iteration ${{ matrix.iteration }})
+        id: test-run
+        continue-on-error: true
+        env:
+          OTEL_SDK_DISABLED: ${{ steps.config.outputs.disable-telemetry }}
+          DEBUG: 'true'
+        run: |
+          echo "=========================================="
+          echo "Iteration: ${{ matrix.iteration }}"
+          echo "Test file: ${{ steps.config.outputs.test-file }}"
+          echo "Timeout: ${{ steps.config.outputs.timeout }}ms"
+          echo "Telemetry disabled: ${{ steps.config.outputs.disable-telemetry }}"
+          echo "Start time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "=========================================="
+
+          START_TIME=$(date +%s)
+
+          # Run the test with timeout and capture output
+          timeout ${{ inputs.timeout || '60' }}s npm run test:integ:browser -- ${{ steps.config.outputs.test-file }} --testTimeout=${{ steps.config.outputs.timeout }} 2>&1 | tee test-output-${{ matrix.iteration }}.log
+
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          echo "=========================================="
+          echo "End time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Duration: ${DURATION}s"
+          echo "Exit code: ${TEST_EXIT_CODE}"
+          echo "=========================================="
+
+          # Save results for summary
+          echo "exit-code=${TEST_EXIT_CODE}" >> $GITHUB_OUTPUT
+          echo "duration=${DURATION}" >> $GITHUB_OUTPUT
+
+          exit ${TEST_EXIT_CODE}
+
+      - name: Check for timeout patterns
+        if: always()
+        run: |
+          echo "Checking for timeout patterns in logs..."
+
+          if grep -q "Test timed out" test-output-${{ matrix.iteration }}.log; then
+            echo "❌ TIMEOUT DETECTED"
+            echo "timeout=true" >> $GITHUB_ENV
+
+            # Extract context around timeout
+            echo "Context around timeout:"
+            grep -B 20 "Test timed out" test-output-${{ matrix.iteration }}.log || true
+          else
+            echo "✅ No timeout detected"
+            echo "timeout=false" >> $GITHUB_ENV
+          fi
+
+          if grep -q "otel failure" test-output-${{ matrix.iteration }}.log; then
+            echo "⚠️ OpenTelemetry errors detected"
+            grep "otel failure" test-output-${{ matrix.iteration }}.log || true
+          fi
+
+          if grep -q "FAIL" test-output-${{ matrix.iteration }}.log; then
+            echo "❌ Test failures detected"
+            grep "FAIL" test-output-${{ matrix.iteration }}.log || true
+          fi
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-iteration-${{ matrix.iteration }}
+          path: |
+            test-output-${{ matrix.iteration }}.log
+            test/.artifacts/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Report result
+        if: always()
+        run: |
+          echo "### Iteration ${{ matrix.iteration }} Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Exit Code**: ${{ steps.test-run.outputs.exit-code }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Duration**: ${{ steps.test-run.outputs.duration }}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timeout**: ${{ env.timeout }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ steps.test-run.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+  summarize-results:
+    name: Summarize Test Results
+    runs-on: ubuntu-latest
+    needs: debug-browser-tests
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: all-artifacts
+
+      - name: Analyze results
+        run: |
+          echo "# Debug Browser Hang Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Test File**: ${{ inputs.test-file || 'telemetry-browser-hang.test.ts' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Iterations**: ${{ inputs.iterations || '5' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timeout**: ${{ inputs.timeout || '60' }}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Telemetry Disabled**: ${{ inputs.disable-telemetry || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Results by Iteration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          TOTAL_RUNS=0
+          TIMEOUTS=0
+          FAILURES=0
+          SUCCESSES=0
+
+          # Analyze each iteration's logs
+          for dir in all-artifacts/test-logs-iteration-*; do
+            if [ -d "$dir" ]; then
+              ITERATION=$(basename "$dir" | grep -oE '[0-9]+$')
+              LOG_FILE="$dir/test-output-${ITERATION}.log"
+
+              TOTAL_RUNS=$((TOTAL_RUNS + 1))
+
+              if [ -f "$LOG_FILE" ]; then
+                if grep -q "Test timed out" "$LOG_FILE"; then
+                  echo "- **Iteration $ITERATION**: ❌ TIMEOUT" >> $GITHUB_STEP_SUMMARY
+                  TIMEOUTS=$((TIMEOUTS + 1))
+                elif grep -q "Test Files.*passed" "$LOG_FILE"; then
+                  echo "- **Iteration $ITERATION**: ✅ PASSED" >> $GITHUB_STEP_SUMMARY
+                  SUCCESSES=$((SUCCESSES + 1))
+                else
+                  echo "- **Iteration $ITERATION**: ❌ FAILED" >> $GITHUB_STEP_SUMMARY
+                  FAILURES=$((FAILURES + 1))
+                fi
+              else
+                echo "- **Iteration $ITERATION**: ⚠️ No log file found" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Summary Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Runs**: $TOTAL_RUNS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Successes**: $SUCCESSES" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timeouts**: $TIMEOUTS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Other Failures**: $FAILURES" >> $GITHUB_STEP_SUMMARY
+
+          if [ $TOTAL_RUNS -gt 0 ]; then
+            TIMEOUT_RATE=$((TIMEOUTS * 100 / TOTAL_RUNS))
+            echo "- **Timeout Rate**: ${TIMEOUT_RATE}%" >> $GITHUB_STEP_SUMMARY
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ $TIMEOUTS -gt 0 ]; then
+              echo "## ⚠️ Timeouts Detected!" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Found $TIMEOUTS timeouts out of $TOTAL_RUNS runs (${TIMEOUT_RATE}%)" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Check the uploaded artifacts for detailed logs." >> $GITHUB_STEP_SUMMARY
+            elif [ $FAILURES -gt 0 ]; then
+              echo "## ⚠️ Failures Detected!" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Found $FAILURES failures out of $TOTAL_RUNS runs" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "## ✅ All Tests Passed!" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "No timeouts or failures detected in $TOTAL_RUNS runs." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**This suggests:**" >> $GITHUB_STEP_SUMMARY
+              echo "- The issue may require more iterations to reproduce" >> $GITHUB_STEP_SUMMARY
+              echo "- Or the issue may be specific to certain conditions not captured here" >> $GITHUB_STEP_SUMMARY
+              echo "- Or the recent changes fixed the issue" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+      - name: Upload summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-summary
+          path: all-artifacts/
+          retention-days: 7

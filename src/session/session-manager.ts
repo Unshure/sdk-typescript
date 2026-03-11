@@ -1,4 +1,5 @@
 import type { SnapshotStorage, SnapshotLocation } from './storage.js'
+import { validateIdentifier } from './validation.js'
 import type { SnapshotTriggerCallback } from './types.js'
 import type { HookProvider } from '../hooks/index.js'
 import type { HookRegistry } from '../hooks/registry.js'
@@ -60,7 +61,7 @@ export class SessionManager implements HookProvider {
   private readonly _snapshotTrigger?: SnapshotTriggerCallback | undefined
 
   constructor(config: SessionManagerConfig) {
-    this._sessionId = config.sessionId ?? 'default-session'
+    this._sessionId = validateIdentifier(config.sessionId ?? 'default-session')
     this._storage = { snapshot: config.storage.snapshot }
     this._saveLatestOn = config.saveLatestOn ?? 'invocation'
     this._snapshotTrigger = config.snapshotTrigger
@@ -99,6 +100,11 @@ export class SessionManager implements HookProvider {
       isLatest: params.isLatest,
       snapshot,
     })
+  }
+
+  /** Deletes all snapshots and manifests for this session from storage. */
+  async deleteSession(): Promise<void> {
+    await this._storage.snapshot.deleteSession({ sessionId: this._sessionId })
   }
 
   /** Loads a snapshot from storage and restores it into the target agent. Returns false if no snapshot exists. */

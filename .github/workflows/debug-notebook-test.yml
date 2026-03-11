@@ -1,0 +1,72 @@
+name: Debug Notebook Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: 'Number of times to run the test'
+        required: false
+        default: '10'
+        type: string
+
+jobs:
+  run-notebook-test-multiple-times:
+    name: Run notebook test (iteration ${{ matrix.iteration }})
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false  # Continue running all iterations even if some fail
+      matrix:
+        iteration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npm run test:browser:install
+
+      - name: Build the package
+        run: npm run build
+
+      - name: Run notebook test (iteration ${{ matrix.iteration }})
+        run: npx vitest run test/integ/notebook.test.ts --project integ-browser
+        continue-on-error: true  # Mark step as passed even if test fails so we can collect results
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-artifacts-iteration-${{ matrix.iteration }}
+          path: ./test/.artifacts/
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: run-notebook-test-multiple-times
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "All test iterations completed. Check individual job results above."
+          echo "Review the uploaded artifacts for detailed test output from each iteration."

@@ -80,6 +80,23 @@ sdk-typescript/
 │   │   ├── tool.ts               # Tool interface
 │   │   └── types.ts              # Tool-related type definitions
 │   │
+│   ├── multiagent/               # Multi-agent orchestration patterns
+│   │   ├── __tests__/            # Unit tests for multi-agent
+│   │   │   ├── graph.test.ts     # Tests for Graph orchestrator
+│   │   │   ├── swarm.test.ts     # Tests for Swarm orchestrator
+│   │   │   ├── nodes.test.ts     # Tests for Node types
+│   │   │   ├── events.test.ts    # Tests for multi-agent events
+│   │   │   └── queue.test.ts     # Tests for execution queue
+│   │   ├── base.ts               # MultiAgentBase interface
+│   │   ├── graph.ts              # Graph orchestrator (DAG execution)
+│   │   ├── swarm.ts              # Swarm orchestrator (handoff-based)
+│   │   ├── nodes.ts              # Node types (AgentNode, MultiAgentNode)
+│   │   ├── state.ts              # MultiAgentState, NodeResult, Status
+│   │   ├── events.ts             # Multi-agent streaming events
+│   │   ├── edge.ts               # Graph edge definitions
+│   │   ├── queue.ts              # Node execution queue
+│   │   └── index.ts              # Public exports
+│   │
 │   ├── types/                    # Core type definitions
 │   │   ├── json.ts               # JSON schema and value types
 │   │   └── messages.ts           # Message and content block types
@@ -94,7 +111,7 @@ sdk-typescript/
 │   ├── app-state.ts              # App state implementation
 │   └── index.ts                  # Main SDK entry point (single export point)
 │
-├── vended_tools/                  # Optional vended tools (not part of core SDK)
+├── vended-tools/                 # Optional vended tools (not part of core SDK)
 │   ├── notebook/                 # Notebook tool for managing text notebooks
 │   │   ├── __tests__/            # Unit tests for notebook tool
 │   │   │   └── notebook.test.ts
@@ -105,13 +122,19 @@ sdk-typescript/
 │   └── README.md                 # Vended tools overview
 │
 ├── test/integ/                  # Integration tests (separate from source)
+│   ├── multiagent/               # Multi-agent integration tests
+│   │   ├── graph.test.ts         # Graph orchestrator integration tests
+│   │   └── swarm.test.ts         # Swarm orchestrator integration tests
 │   ├── bedrock.test.ts           # Bedrock integration tests (requires AWS credentials)
 │   ├── hooks.test.ts             # Hooks integration tests
 │   └── registry.test.ts          # ToolRegistry integration tests
 │
 ├── examples/                     # Example applications
 │   ├── first-agent/              # Basic agent usage example
-│   └── mcp/                      # MCP integration examples
+│   ├── graph/                    # Graph multi-agent orchestration example
+│   ├── mcp/                      # MCP integration examples
+│   ├── swarm/                    # Swarm multi-agent orchestration example
+│   └── telemetry/                # OpenTelemetry integration example
 │
 ├── .github/                      # GitHub Actions workflows
 │   ├── workflows/                # CI/CD workflows
@@ -154,8 +177,9 @@ sdk-typescript/
 - **`src/models/`**: Model provider implementations (Bedrock, OpenAI, future providers)
 - **`src/structured-output/`**: Structured output with Zod schema validation and automatic retry logic
 - **`src/tools/`**: Tool definitions and types for agent tool use
+- **`src/multiagent/`**: Multi-agent orchestration patterns (Graph for DAG execution, Swarm for handoff-based routing)
 - **`src/types/`**: Core type definitions used across the SDK
-- **`vended_tools/`**: Optional vended tools (not part of core SDK, independently importable)
+- **`src/vended-tools/`**: Optional vended tools (not part of core SDK, independently importable)
 - **`test/integ/`**: Integration tests (tests public API and external integrations)
 - **`.github/workflows/`**: CI/CD automation and quality gates
 - **`.project/`**: Task management and project tracking
@@ -606,7 +630,7 @@ export type DocumentSourceData =
   | { bytes: Uint8Array }
   | { text: string }
   | { content: DocumentContentBlockData[] }
-  | { s3Location: S3LocationData }
+  | { location: S3LocationData }
 
 // Correct: multi-variant union for citation locations
 export type CitationLocation =

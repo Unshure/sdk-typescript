@@ -13,7 +13,7 @@
  *     return 'my-plugin'
  *   }
  *
- *   override initAgent(agent: AgentData): void {
+ *   override initAgent(agent: LocalAgent): void {
  *     agent.addHook(BeforeInvocationEvent, (event) => {
  *       console.log('Before invocation')
  *     })
@@ -27,4 +27,4 @@
  * ```
  */
 
-export { Plugin } from './plugin.js'
+export type { Plugin } from './plugin.js'

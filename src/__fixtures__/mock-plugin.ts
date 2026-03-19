@@ -1,6 +1,6 @@
 import type { HookableEvent } from '../hooks/index.js'
-import { Plugin } from '../plugins/plugin.js'
-import type { AgentData } from '../types/agent.js'
+import type { Plugin } from '../plugins/plugin.js'
+import type { LocalAgent } from '../types/agent.js'
 import {
   InitializedEvent,
   BeforeInvocationEvent,
@@ -16,14 +16,14 @@ import type { HookableEventConstructor } from '../hooks/types.js'
 /**
  * Mock plugin that records all hookable event invocations for testing.
  */
-export class MockPlugin extends Plugin {
+export class MockPlugin implements Plugin {
   invocations: HookableEvent[] = []
 
   get name(): string {
     return 'mock-plugin'
   }
 
-  override initAgent(agent: AgentData): void {
+  initAgent(agent: LocalAgent): void {
     const eventTypes: HookableEventConstructor[] = [
       InitializedEvent,
       BeforeInvocationEvent,

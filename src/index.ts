@@ -9,12 +9,12 @@
 export { Agent } from './agent/agent.js'
 
 // App state
-export { AppState } from './app-state.js'
+export { StateStore } from './state-store.js'
 
 // Agent types
-export type { AgentData } from './types/agent.js'
 export { AgentResult } from './types/agent.js'
 export type { AgentConfig, ToolList } from './agent/agent.js'
+export type { LocalAgent } from './types/agent.js'
 
 // Error types
 export {
@@ -65,6 +65,7 @@ export {
   Message,
   JsonBlock,
   contentBlockFromData,
+  toolResultContentFromData,
 } from './types/messages.js'
 
 // Citation types
@@ -84,6 +85,7 @@ export { S3Location, ImageBlock, VideoBlock, DocumentBlock } from './types/media
 
 // Media types
 export type {
+  LocationData,
   S3LocationData,
   ImageFormat,
   ImageSource,
@@ -105,16 +107,10 @@ export type {
 export type { ToolSpec, ToolUse, ToolResultStatus, ToolChoice } from './tools/types.js'
 
 // Tool interface and related types
-export type {
-  InvokableTool,
-  ToolContext,
-  ToolStreamEventData,
-  ToolStreamEvent,
-  ToolStreamGenerator,
-} from './tools/tool.js'
+export type { InvokableTool, ToolContext, ToolStreamEventData, ToolStreamGenerator } from './tools/tool.js'
 
-// Tool base class
-export { Tool } from './tools/tool.js'
+// Tool base class and event classes
+export { Tool, ToolStreamEvent } from './tools/tool.js'
 
 // FunctionTool implementation
 export { FunctionTool } from './tools/function-tool.js'
@@ -132,33 +128,37 @@ export type {
   Usage,
   Metrics,
   ModelMessageStartEventData,
-  ModelMessageStartEvent,
   ToolUseStart,
   ContentBlockStart,
   ModelContentBlockStartEventData,
-  ModelContentBlockStartEvent,
   TextDelta,
   ToolUseInputDelta,
   ReasoningContentDelta,
   CitationsDelta,
   ContentBlockDelta,
   ModelContentBlockDeltaEventData,
-  ModelContentBlockDeltaEvent,
-  ModelContentBlockStopEvent,
   ModelMessageStopEventData,
-  ModelMessageStopEvent,
   ModelMetadataEventData,
-  ModelMetadataEvent,
   RedactInputContent,
   RedactOutputContent,
   ModelRedactionEventData,
-  ModelRedactionEvent,
   ModelStreamEvent,
 } from './models/streaming.js'
-export { isModelStreamEvent } from './models/streaming.js'
+
+// Streaming event classes (value exports for instanceof checks and custom model providers)
+export {
+  isModelStreamEvent,
+  ModelMessageStartEvent,
+  ModelContentBlockStartEvent,
+  ModelContentBlockDeltaEvent,
+  ModelContentBlockStopEvent,
+  ModelMessageStopEvent,
+  ModelMetadataEvent,
+  ModelRedactionEvent,
+} from './models/streaming.js'
 
 // Model provider types
-export type { BaseModelConfig, StreamOptions } from './models/model.js'
+export type { BaseModelConfig, StreamOptions, CacheConfig } from './models/model.js'
 
 export { Model } from './models/model.js'
 
@@ -199,9 +199,13 @@ export {
 export type { HookCallback, HookableEventConstructor, ModelStopResponse, Redaction } from './hooks/index.js'
 
 // Plugin system
-export { Plugin } from './plugins/index.js'
+export type { Plugin } from './plugins/index.js'
 
 // Conversation Manager
+export {
+  ConversationManager,
+  type ConversationManagerReduceOptions,
+} from './conversation-manager/conversation-manager.js'
 export { NullConversationManager } from './conversation-manager/null-conversation-manager.js'
 export {
   SlidingWindowConversationManager,
@@ -224,13 +228,9 @@ export type { SessionManagerConfig, SaveLatestStrategy } from './session/session
 export type { SnapshotManifest, SnapshotTriggerCallback, SnapshotTriggerParams } from './session/types.js'
 export type { SessionStorage, SnapshotStorage, SnapshotLocation } from './session/storage.js'
 export { FileStorage } from './session/file-storage.js'
-export { S3Storage, type S3StorageConfig } from './session/s3-storage.js'
 export type { Scope, Snapshot } from './agent/snapshot.js'
 
 // Telemetry
-export * as telemetry from './telemetry/index.js'
-
-// Local Metrics
 export { AgentMetrics } from './telemetry/meter.js'
 
 // Multi-agent orchestration

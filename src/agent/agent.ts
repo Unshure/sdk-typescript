@@ -1,4 +1,11 @@
-import { AgentResult, type AgentStreamEvent } from '../types/agent.js'
+import {
+  AgentResult,
+  type AgentStreamEvent,
+  type InvokableAgent,
+  type InvokeArgs,
+  type InvokeOptions,
+  type LocalAgent,
+} from '../types/agent.js'
 import { BedrockModel } from '../models/bedrock.js'
 import {
   contentBlockFromData,
@@ -22,12 +29,12 @@ import { Model } from '../models/model.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import { isModelStreamEvent } from '../models/streaming.js'
 import { ToolRegistry } from '../registry/tool-registry.js'
-import { AppState } from '../app-state.js'
-import type { AgentData } from '../types/agent.js'
+import { StateStore } from '../state-store.js'
 import { AgentPrinter, getDefaultAppender, type Printer } from './printer.js'
-import { Plugin } from '../plugins/plugin.js'
+import type { Plugin } from '../plugins/plugin.js'
 import { PluginRegistry } from '../plugins/registry.js'
 import { SlidingWindowConversationManager } from '../conversation-manager/sliding-window-conversation-manager.js'
+import { ConversationManager } from '../conversation-manager/conversation-manager.js'
 import { HookRegistryImplementation } from '../hooks/registry.js'
 import type { HookableEventConstructor, HookCallback, HookCleanup } from '../hooks/types.js'
 import {
@@ -104,7 +111,7 @@ export type AgentConfig = {
    */
   systemPrompt?: SystemPrompt | SystemPromptData
   /** Optional initial state values for the agent. */
-  state?: Record<string, JSONValue>
+  appState?: Record<string, JSONValue>
   /**
    * Enable automatic printing of agent output to console.
    * When true, prints text generation, reasoning, and tool usage as they occur.
@@ -115,7 +122,7 @@ export type AgentConfig = {
    * Conversation manager for handling message history and context overflow.
    * Defaults to SlidingWindowConversationManager with windowSize of 40.
    */
-  conversationManager?: Plugin
+  conversationManager?: ConversationManager
   /**
    * Plugins to register with the agent.
    */
@@ -143,43 +150,23 @@ export type AgentConfig = {
    */
   description?: string
   /**
-   * Optional unique identifier for the agent. Defaults to "default".
+   * Optional unique identifier for the agent. Defaults to "agent".
    */
-  agentId?: string
+  id?: string
 }
 
-/**
- * Arguments for invoking an agent.
- *
- * Supports multiple input formats:
- * - `string` - User text input (wrapped in TextBlock, creates user Message)
- * - `ContentBlock[]` | `ContentBlockData[]` - Array of content blocks (creates single user Message)
- * - `Message[]` | `MessageData[]` - Array of messages (appends all to conversation)
- */
-export type InvokeArgs = string | ContentBlock[] | ContentBlockData[] | Message[] | MessageData[]
-
-/**
- * Options for a single agent invocation.
- */
-export interface InvokeOptions {
-  /**
-   * Zod schema for structured output validation, overriding the constructor-provided schema for this invocation only.
-   */
-  structuredOutputSchema?: z.ZodSchema
-}
-
-/** Fallback name used when no agent name is provided in the config. */
+/** Default name assigned to agents when none is provided. */
 const DEFAULT_AGENT_NAME = 'Strands Agent'
 
-/** Fallback agent ID used when no agent ID is provided in the config. */
-const DEFAULT_AGENT_ID = 'default'
+/** Default identifier assigned to agents when none is provided. */
+const DEFAULT_AGENT_ID = 'agent'
 
 /**
  * Orchestrates the interaction between a model, a set of tools, and MCP clients.
  * The Agent is responsible for managing the lifecycle of tools and clients
  * and invoking the core decision-making loop.
  */
-export class Agent implements AgentData {
+export class Agent implements LocalAgent, InvokableAgent {
   /**
    * The conversation history of messages between user and assistant.
    */
@@ -188,8 +175,8 @@ export class Agent implements AgentData {
    * App state storage accessible to tools and application logic.
    * State is not passed to the model during inference.
    */
-  public readonly state: AppState
-  private readonly _conversationManager: Plugin
+  public readonly appState: StateStore
+  private readonly _conversationManager: ConversationManager
 
   /**
    * The model provider used by the agent for inference.
@@ -209,7 +196,7 @@ export class Agent implements AgentData {
   /**
    * The unique identifier of the agent instance.
    */
-  public readonly agentId: string
+  public readonly id: string
 
   /**
    * Optional description of what the agent does.
@@ -236,10 +223,10 @@ export class Agent implements AgentData {
   constructor(config?: AgentConfig) {
     // Initialize public fields
     this.messages = (config?.messages ?? []).map((msg) => (msg instanceof Message ? msg : Message.fromMessageData(msg)))
-    this.state = new AppState(config?.state)
+    this.appState = new StateStore(config?.appState)
     this._conversationManager = config?.conversationManager ?? new SlidingWindowConversationManager({ windowSize: 40 })
     this.name = config?.name ?? DEFAULT_AGENT_NAME
-    this.agentId = config?.agentId ?? DEFAULT_AGENT_ID
+    this.id = config?.id ?? DEFAULT_AGENT_ID
     if (config?.description !== undefined) this.description = config.description
 
     if (typeof config?.model === 'string') {
@@ -484,7 +471,7 @@ export class Agent implements AgentData {
     const agentSpanOptions: Parameters<Tracer['startAgentSpan']>[0] = {
       messages: inputMessages,
       agentName: this.name,
-      agentId: this.agentId,
+      agentId: this.id,
       tools: this.tools,
     }
     if (agentModelId) agentSpanOptions.modelId = agentModelId
@@ -508,8 +495,16 @@ export class Agent implements AgentData {
         })
 
         try {
-          const modelResult = yield* this.invokeModel(currentArgs, forcedToolChoice)
-          currentArgs = undefined // Only pass args on first invocation
+          // Normalize input and append user messages on first invocation only
+          if (currentArgs !== undefined) {
+            const messagesToAppend = this._normalizeInput(currentArgs)
+            for (const message of messagesToAppend) {
+              yield this._appendMessage(message)
+            }
+            currentArgs = undefined
+          }
+
+          const modelResult = yield* this.invokeModel(forcedToolChoice)
           const wasForced = forcedToolChoice !== undefined
           forcedToolChoice = undefined // Clear after use
 
@@ -673,15 +668,8 @@ export class Agent implements AgentData {
    * @returns Object containing the assistant message, stop reason, and optional redaction message
    */
   private async *invokeModel(
-    args?: InvokeArgs,
     forcedToolChoice?: ToolChoice
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    // Normalize input and append messages to conversation
-    const messagesToAppend = this._normalizeInput(args)
-    for (const message of messagesToAppend) {
-      yield this._appendMessage(message)
-    }
-
     const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
     const streamOptions: StreamOptions = { toolSpecs }
     if (this.systemPrompt !== undefined) {
@@ -700,6 +688,7 @@ export class Agent implements AgentData {
     const modelSpan = this._tracer.startModelInvokeSpan({
       messages: this.messages,
       ...(modelId && { modelId }),
+      ...(this.systemPrompt !== undefined && { systemPrompt: this.systemPrompt }),
     })
 
     try {
@@ -710,10 +699,12 @@ export class Agent implements AgentData {
 
       // End model span with usage
       const usage = result.metadata?.usage
+      const metrics = result.metadata?.metrics
       this._tracer.endModelInvokeSpan(modelSpan, {
         output: result.message,
         stopReason: result.stopReason,
         ...(usage && { usage }),
+        ...(metrics && { metrics }),
       })
 
       yield new ModelMessageEvent({ agent: this, message: result.message, stopReason: result.stopReason })
@@ -733,7 +724,7 @@ export class Agent implements AgentData {
       yield afterModelCallEvent
 
       if (afterModelCallEvent.retry) {
-        return yield* this.invokeModel(args)
+        return yield* this.invokeModel(forcedToolChoice)
       }
 
       return result
@@ -751,7 +742,7 @@ export class Agent implements AgentData {
 
       // After yielding, hooks have been invoked and may have set retry
       if (errorEvent.retry) {
-        return yield* this.invokeModel(args)
+        return yield* this.invokeModel(forcedToolChoice)
       }
 
       // Re-throw error

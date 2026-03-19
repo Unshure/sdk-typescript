@@ -12,7 +12,7 @@ import {
   ToolResultBlock,
   JsonBlock,
 } from '../../types/messages.js'
-import { ImageBlock, DocumentBlock } from '../../types/media.js'
+import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 
 /**
  * Helper to create a mock Anthropic client with streaming support
@@ -42,7 +42,6 @@ vi.mock('@anthropic-ai/sdk', () => {
 describe('AnthropicModel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.restoreAllMocks()
     if (isNode) {
       vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test-env')
     }
@@ -59,7 +58,7 @@ describe('AnthropicModel', () => {
     it('creates an instance with default configuration', () => {
       const provider = new AnthropicModel({ apiKey: 'sk-ant-test' })
       const config = provider.getConfig()
-      expect(config.modelId).toBe('claude-sonnet-4-5-20250929')
+      expect(config.modelId).toBe('claude-sonnet-4-6')
       expect(config.maxTokens).toBe(4096)
     })
 
@@ -541,6 +540,92 @@ describe('AnthropicModel', () => {
         // JSON is stringified in Anthropic tool result content
         expect(content.content[0]).toEqual({ type: 'text', text: '{"error":"failed"}' })
         expect(content.content[1]).toEqual({ type: 'text', text: 'Details here' })
+      })
+
+      it('formats image block inside tool result via recursive formatting', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const imageBytes = new Uint8Array([72, 101, 108, 108, 111])
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 't1',
+                status: 'success',
+                content: [
+                  new TextBlock('Here is the screenshot'),
+                  new ImageBlock({ format: 'png', source: { bytes: imageBytes } }),
+                ],
+              }),
+            ],
+          }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        const content = captured.request.messages[0].content[0]
+        expect(content.type).toBe('tool_result')
+        expect(Array.isArray(content.content)).toBe(true)
+        expect(content.content[0]).toEqual({ type: 'text', text: 'Here is the screenshot' })
+        expect(content.content[1]).toEqual({
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'SGVsbG8=' },
+        })
+      })
+
+      it('formats document block inside tool result as text for text formats', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 't1',
+                status: 'success',
+                content: [new DocumentBlock({ name: 'data.json', format: 'json', source: { text: '{"key":"val"}' } })],
+              }),
+            ],
+          }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        const content = captured.request.messages[0].content[0]
+        expect(content.type).toBe('tool_result')
+        // Single text item collapses to string
+        expect(content.content).toBe('{"key":"val"}')
+      })
+
+      it('skips video block inside tool result with warning', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 't1',
+                status: 'success',
+                content: [
+                  new TextBlock('result'),
+                  new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array([1]) } }),
+                ],
+              }),
+            ],
+          }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        const content = captured.request.messages[0].content[0]
+        expect(content.type).toBe('tool_result')
+        // Video is filtered out, single text collapses to string
+        expect(content.content).toBe('result')
+        expect(warnSpy).toHaveBeenCalled()
+        warnSpy.mockRestore()
       })
     })
   })

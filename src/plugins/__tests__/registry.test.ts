@@ -1,22 +1,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { PluginRegistry } from '../registry.js'
-import { Plugin } from '../plugin.js'
+import type { Plugin } from '../plugin.js'
 import { BeforeInvocationEvent, type HookableEvent } from '../../hooks/events.js'
 import type { Tool } from '../../tools/tool.js'
 import type { HookableEventConstructor, HookCallback } from '../../hooks/types.js'
-import type { AgentData } from '../../types/agent.js'
+import type { LocalAgent } from '../../types/agent.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
 import { createRandomTool } from '../../__fixtures__/tool-helpers.js'
 
 /**
  * Test plugin implementation.
  */
-class TestPlugin extends Plugin {
+class TestPlugin implements Plugin {
   public hookRegistered = false
   private readonly _name: string
 
   constructor(name: string = 'test-plugin') {
-    super()
     this._name = name
   }
 
@@ -24,7 +23,7 @@ class TestPlugin extends Plugin {
     return this._name
   }
 
-  override initAgent(agent: AgentData): void {
+  initAgent(agent: LocalAgent): void {
     agent.addHook(BeforeInvocationEvent, () => {
       this.hookRegistered = true
     })
@@ -34,18 +33,16 @@ class TestPlugin extends Plugin {
 /**
  * Plugin with initAgent for testing initialization.
  */
-class InitializableTestPlugin extends Plugin {
+class InitializableTestPlugin implements Plugin {
   public initialized = false
 
-  constructor(private readonly _name: string = 'initializable-plugin') {
-    super()
-  }
+  constructor(private readonly _name: string = 'initializable-plugin') {}
 
   get name(): string {
     return this._name
   }
 
-  override initAgent(_agent: AgentData): void {
+  initAgent(_agent: LocalAgent): void {
     this.initialized = true
   }
 }
@@ -53,26 +50,26 @@ class InitializableTestPlugin extends Plugin {
 /**
  * Plugin that provides tools.
  */
-class ToolProviderPlugin extends Plugin {
+class ToolProviderPlugin implements Plugin {
   constructor(
     private readonly _name: string,
     private readonly _tools: Tool[]
-  ) {
-    super()
-  }
+  ) {}
 
   get name(): string {
     return this._name
   }
 
-  override getTools(): Tool[] {
+  initAgent(_agent: LocalAgent): void {}
+
+  getTools(): Tool[] {
     return this._tools
   }
 }
 
 describe('PluginRegistry', () => {
   let registry: PluginRegistry
-  let mockAgent: AgentData
+  let mockAgent: LocalAgent
   let registeredHooks: Array<{
     eventType: HookableEventConstructor<HookableEvent>
     callback: HookCallback<HookableEvent>
@@ -90,7 +87,7 @@ describe('PluginRegistry', () => {
           return () => {}
         },
       },
-    }) as unknown as AgentData
+    }) as unknown as LocalAgent
   })
 
   describe('initialize', () => {
@@ -144,14 +141,14 @@ describe('PluginRegistry', () => {
     })
 
     it('handles async initAgent', async () => {
-      class AsyncPlugin extends Plugin {
+      class AsyncPlugin implements Plugin {
         public initialized = false
 
         get name(): string {
           return 'async-plugin'
         }
 
-        override async initAgent(_agent: AgentData): Promise<void> {
+        async initAgent(_agent: LocalAgent): Promise<void> {
           await vi.waitFor(() => Promise.resolve())
           this.initialized = true
         }
@@ -184,7 +181,7 @@ describe('PluginRegistry', () => {
       await registry.initialize(mockAgent)
 
       const callback = registeredHooks[0]?.callback
-      const mockAgentData = {} as AgentData
+      const mockAgentData = {} as LocalAgent
       callback?.(new BeforeInvocationEvent({ agent: mockAgentData }))
 
       expect(plugin.hookRegistered).toBe(true)

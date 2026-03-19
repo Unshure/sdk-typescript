@@ -45,7 +45,10 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
       })
 
       it.concurrent('uses system prompt cache on subsequent requests', async () => {
-        const provider = bedrock.createModel({ maxTokens: 100 })
+        const provider = bedrock.createModel({
+          modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+          maxTokens: 100,
+        })
         const largeContext = `Context information: ${'hello '.repeat(2000)} [test-${Date.now()}-${Math.random()}]`
         const cachedSystemPrompt: SystemContentBlock[] = [
           new TextBlock('You are a helpful assistant.'),
@@ -73,7 +76,10 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
       })
 
       it.concurrent('uses message cache points on subsequent requests', async () => {
-        const provider = bedrock.createModel({ maxTokens: 100 })
+        const provider = bedrock.createModel({
+          modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+          maxTokens: 100,
+        })
         const largeContext = `Context information: ${'hello '.repeat(2000)} [test-${Date.now()}-${Math.random()}]`
         const messagesWithCachePoint = (text: string): Message[] => [
           new Message({
@@ -92,6 +98,59 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
         const metadata2 = events2.find((e) => e.type === 'modelMetadataEvent')
         expect(metadata2?.usage?.cacheReadInputTokens).toBeGreaterThan(0)
       })
+
+      it.concurrent('uses cacheConfig to automatically inject cache points in tools and messages', async () => {
+        const provider = bedrock.createModel({
+          modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+          maxTokens: 100,
+          cacheConfig: { strategy: 'auto' },
+        })
+        const largeContext = `Context information: ${'hello '.repeat(2000)} [test-${Date.now()}-${Math.random()}]`
+
+        const toolSpecs = [
+          {
+            name: 'lookup',
+            description: 'Look up information. '.repeat(100),
+            inputSchema: { type: 'object' as const, properties: { query: { type: 'string' as const } } },
+          },
+        ]
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock(largeContext)] })]
+
+        // First request - writes to cache
+        const events1 = await collectIterator(provider.stream(messages, { toolSpecs }))
+        const metadata1 = events1.find((e) => e.type === 'modelMetadataEvent')
+        expect(metadata1?.usage?.cacheWriteInputTokens).toBeGreaterThan(0)
+
+        // Second request - identical content, should read from cache
+        const events2 = await collectIterator(provider.stream(messages, { toolSpecs }))
+        const metadata2 = events2.find((e) => e.type === 'modelMetadataEvent')
+        expect(metadata2?.usage?.cacheReadInputTokens).toBeGreaterThan(0)
+      })
+
+      it.concurrent(
+        'uses cacheConfig with explicit anthropic strategy for application inference profiles',
+        async () => {
+          const provider = bedrock.createModel({
+            modelId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            maxTokens: 100,
+            cacheConfig: { strategy: 'anthropic' },
+          })
+          const largeContext = `Context information: ${'hello '.repeat(2000)} [test-${Date.now()}-${Math.random()}]`
+
+          const messages = [new Message({ role: 'user', content: [new TextBlock(largeContext)] })]
+
+          // First request - writes to cache
+          const events1 = await collectIterator(provider.stream(messages))
+          const metadata1 = events1.find((e) => e.type === 'modelMetadataEvent')
+          expect(metadata1?.usage?.cacheWriteInputTokens).toBeGreaterThan(0)
+
+          // Second request - identical content, should read from cache
+          const events2 = await collectIterator(provider.stream(messages))
+          const metadata2 = events2.find((e) => e.type === 'modelMetadataEvent')
+          expect(metadata2?.usage?.cacheReadInputTokens).toBeGreaterThan(0)
+        }
+      )
     })
 
     describe('Error Handling', () => {
@@ -208,7 +267,7 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
   describe('Thinking Mode with Tools', () => {
     it('handles thinking mode with tool use', async () => {
       const bedrockModel = bedrock.createModel({
-        modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        modelId: 'global.anthropic.claude-sonnet-4-6',
         additionalRequestFields: {
           thinking: {
             type: 'enabled',
@@ -391,6 +450,7 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
         'blocks output without redaction in %s mode',
         async (processingMode) => {
           const model = bedrock.createModel({
+            modelId: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
             region: 'us-east-1',
             guardrailConfig: {
               guardrailIdentifier: GUARDRAIL_ID!,

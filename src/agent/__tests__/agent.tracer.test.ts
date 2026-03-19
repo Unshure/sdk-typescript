@@ -58,7 +58,7 @@ describe('Agent tracer integration', () => {
     })
   })
 
-  describe('name and agentId', () => {
+  describe('name and id', () => {
     it('defaults name to "Strands Agent"', () => {
       const agent = new Agent()
 
@@ -71,23 +71,23 @@ describe('Agent tracer integration', () => {
       expect(agent.name).toBe('My Agent')
     })
 
-    it('defaults agentId to "default"', () => {
+    it('defaults id to "agent"', () => {
       const agent = new Agent()
 
-      expect(agent.agentId).toBe('default')
+      expect(agent.id).toBe('agent')
     })
 
-    it('uses provided agentId', () => {
-      const agent = new Agent({ agentId: 'custom-id-123' })
+    it('uses provided id', () => {
+      const agent = new Agent({ id: 'custom-id-123' })
 
-      expect(agent.agentId).toBe('custom-id-123')
+      expect(agent.id).toBe('custom-id-123')
     })
   })
 
   describe('agent span lifecycle', () => {
     it('starts and ends agent span on successful invocation', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
-      const agent = new Agent({ model, name: 'TestAgent', agentId: 'test-id' })
+      const agent = new Agent({ model, name: 'TestAgent', id: 'test-id' })
       const tracer = getLatestTracer()
 
       await agent.invoke('Hi')
@@ -111,7 +111,7 @@ describe('Agent tracer integration', () => {
     })
 
     it('ends agent span with error when invocation fails', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Partial' }, 'maxTokens')
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Partial' }, { stopReason: 'maxTokens' })
       const agent = new Agent({ model })
       const tracer = getLatestTracer()
 
@@ -206,7 +206,7 @@ describe('Agent tracer integration', () => {
     })
 
     it('ends loop span with error when cycle fails', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Partial' }, 'maxTokens')
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Partial' }, { stopReason: 'maxTokens' })
       const agent = new Agent({ model })
       const tracer = getLatestTracer()
 
@@ -678,7 +678,7 @@ describe('Agent tracer integration', () => {
     it('ends agent span with error on maxTokens with structured output schema', async () => {
       const schema = z.object({ value: z.number() })
 
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Partial' }, 'maxTokens')
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Partial' }, { stopReason: 'maxTokens' })
 
       const agent = new Agent({ model, structuredOutputSchema: schema })
       const tracer = getLatestTracer()

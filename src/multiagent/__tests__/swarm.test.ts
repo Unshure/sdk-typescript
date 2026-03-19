@@ -5,7 +5,7 @@ import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { BeforeNodeCallEvent, MultiAgentInitializedEvent } from '../events.js'
 import type { JSONValue } from '../../types/json.js'
 import { TextBlock } from '../../types/messages.js'
-import { Status } from '../state.js'
+import { Status, MultiAgentState } from '../state.js'
 import { AgentNode } from '../nodes.js'
 import { Swarm } from '../swarm.js'
 
@@ -26,7 +26,7 @@ function createHandoffAgent(
       input: handoff as JSONValue,
     })
     .addTurn(new TextBlock('Done'))
-  return new Agent({ model, printer: false, agentId, description })
+  return new Agent({ model, printer: false, id: agentId, description })
 }
 
 /**
@@ -63,6 +63,14 @@ describe('Swarm', () => {
       expect(swarm.nodes.get('a')).toBeInstanceOf(AgentNode)
     })
 
+    it('defaults start to the first node when not specified', () => {
+      const swarm = new Swarm({
+        nodes: [createFinalAgent('first', 'hi'), createFinalAgent('second', 'bye')],
+      })
+
+      expect(swarm.start.id).toBe('first')
+    })
+
     it('throws when start references unknown agent', () => {
       expect(
         () =>
@@ -71,6 +79,10 @@ describe('Swarm', () => {
             start: 'missing',
           })
       ).toThrow('start=<missing> | start references unknown agent')
+    })
+
+    it('throws when nodes list is empty', () => {
+      expect(() => new Swarm({ nodes: [] })).toThrow('nodes list is empty')
     })
 
     it('throws on duplicate agent ids', () => {
@@ -165,6 +177,30 @@ describe('Swarm', () => {
       expect(texts).toContainEqual(expect.stringContaining(JSON.stringify(contextData, null, 2)))
     })
 
+    it('excludes current agent from handoff schema', async () => {
+      const agentA = createHandoffAgent('a', { agentId: 'b', message: 'go to b' })
+      const agentB = createFinalAgent('b', 'done')
+      const streamSpyA = vi.spyOn(agentA, 'stream')
+      const streamSpyB = vi.spyOn(agentB, 'stream')
+
+      const swarm = new Swarm({
+        nodes: [agentA, agentB],
+        start: 'a',
+      })
+
+      await swarm.invoke('start')
+
+      // Agent A's handoff schema allows B but rejects A
+      const schemaA = streamSpyA.mock.calls[0]![1]!.structuredOutputSchema!
+      expect(schemaA.parse({ agentId: 'b', message: 'ok' })).toStrictEqual({ agentId: 'b', message: 'ok' })
+      expect(() => schemaA.parse({ agentId: 'a', message: 'ok' })).toThrow()
+
+      // Agent B's handoff schema allows A but rejects B
+      const schemaB = streamSpyB.mock.calls[0]![1]!.structuredOutputSchema!
+      expect(schemaB.parse({ agentId: 'a', message: 'ok' })).toStrictEqual({ agentId: 'a', message: 'ok' })
+      expect(() => schemaB.parse({ agentId: 'b', message: 'ok' })).toThrow()
+    })
+
     it('throws when maxSteps is exceeded', async () => {
       const swarm = new Swarm({
         nodes: [createHandoffAgent('a', { agentId: 'b', message: 'to b' }), createFinalAgent('b', 'done')],
@@ -190,12 +226,14 @@ describe('Swarm', () => {
       expect(result.status).toBe(Status.CANCELLED)
 
       const cancelEvent = items.find((e) => e.type === 'nodeCancelEvent')
-      expect(cancelEvent).toEqual(expect.objectContaining({ nodeId: 'a', message: 'agent not ready' }))
+      expect(cancelEvent).toEqual(
+        expect.objectContaining({ nodeId: 'a', state: expect.any(MultiAgentState), message: 'agent not ready' })
+      )
     })
 
     it('returns failed result when agent throws', async () => {
       const model = new MockMessageModel().addTurn(new Error('agent exploded'))
-      const agent = new Agent({ model, printer: false, agentId: 'a', description: 'Agent a' })
+      const agent = new Agent({ model, printer: false, id: 'a', description: 'Agent a' })
 
       const swarm = new Swarm({
         nodes: [{ agent }],
@@ -230,7 +268,7 @@ describe('Swarm', () => {
     it('preserves agent messages and state after execution', async () => {
       const agent = createFinalAgent('a', 'reply')
       const messagesBefore = [...agent.messages]
-      const stateBefore = agent.state.getAll()
+      const stateBefore = agent.appState.getAll()
 
       const swarm = new Swarm({
         nodes: [agent],
@@ -240,7 +278,7 @@ describe('Swarm', () => {
       await swarm.invoke('hello')
 
       expect(agent.messages).toStrictEqual(messagesBefore)
-      expect(agent.state.getAll()).toStrictEqual(stateBefore)
+      expect(agent.appState.getAll()).toStrictEqual(stateBefore)
     })
   })
 
@@ -283,6 +321,7 @@ describe('Swarm', () => {
           type: 'multiAgentHandoffEvent',
           source: 'a',
           targets: ['b'],
+          state: expect.any(MultiAgentState),
         })
       )
     })
@@ -304,7 +343,9 @@ describe('Swarm', () => {
       expect(result.results[0]).toEqual(expect.objectContaining({ nodeId: 'a', status: Status.CANCELLED, duration: 0 }))
 
       const cancelEvent = items.find((e) => e.type === 'nodeCancelEvent')
-      expect(cancelEvent).toEqual(expect.objectContaining({ nodeId: 'a', message: 'node cancelled by hook' }))
+      expect(cancelEvent).toEqual(
+        expect.objectContaining({ nodeId: 'a', state: expect.any(MultiAgentState), message: 'node cancelled by hook' })
+      )
     })
 
     it('returns cancelled result with custom message when cancel is a string', async () => {
@@ -322,7 +363,9 @@ describe('Swarm', () => {
       expect(result.status).toBe(Status.CANCELLED)
 
       const cancelEvent = items.find((e) => e.type === 'nodeCancelEvent')
-      expect(cancelEvent).toEqual(expect.objectContaining({ nodeId: 'a', message: 'agent not ready' }))
+      expect(cancelEvent).toEqual(
+        expect.objectContaining({ nodeId: 'a', state: expect.any(MultiAgentState), message: 'agent not ready' })
+      )
     })
   })
 })

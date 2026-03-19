@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
-import { isNode } from '../../__fixtures__/environment.js'
+import { isNode, isBrowser } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
@@ -57,7 +57,10 @@ describe('AnthropicModel', () => {
 
   describe('constructor', () => {
     it('creates an instance with default configuration', () => {
-      const provider = new AnthropicModel({ apiKey: 'sk-ant-test' })
+      const provider = new AnthropicModel({
+        apiKey: 'sk-ant-test',
+        clientConfig: { dangerouslyAllowBrowser: isBrowser },
+      })
       const config = provider.getConfig()
       expect(config.modelId).toBe('claude-sonnet-4-6')
       expect(config.maxTokens).toBe(4096)
@@ -65,13 +68,17 @@ describe('AnthropicModel', () => {
 
     it('uses provided model ID', () => {
       const customModelId = 'claude-3-opus-20240229'
-      const provider = new AnthropicModel({ modelId: customModelId, apiKey: 'sk-ant-test' })
+      const provider = new AnthropicModel({
+        modelId: customModelId,
+        apiKey: 'sk-ant-test',
+        clientConfig: { dangerouslyAllowBrowser: isBrowser },
+      })
       expect(provider.getConfig().modelId).toBe(customModelId)
     })
 
     it('uses API key from constructor parameter', () => {
       const apiKey = 'sk-explicit'
-      new AnthropicModel({ apiKey })
+      new AnthropicModel({ apiKey, clientConfig: { dangerouslyAllowBrowser: isBrowser } })
       expect(Anthropic).toHaveBeenCalledWith(
         expect.objectContaining({
           apiKey,
@@ -82,13 +89,15 @@ describe('AnthropicModel', () => {
     if (isNode) {
       it('uses API key from environment variable', () => {
         vi.stubEnv('ANTHROPIC_API_KEY', 'sk-from-env')
-        new AnthropicModel()
+        new AnthropicModel({ clientConfig: { dangerouslyAllowBrowser: isBrowser } })
         expect(Anthropic).toHaveBeenCalled()
       })
 
       it('throws error when no API key is available', () => {
         vi.stubEnv('ANTHROPIC_API_KEY', '')
-        expect(() => new AnthropicModel()).toThrow('Anthropic API key is required')
+        expect(() => new AnthropicModel({ clientConfig: { dangerouslyAllowBrowser: isBrowser } })).toThrow(
+          'Anthropic API key is required'
+        )
       })
     }
 
@@ -102,7 +111,11 @@ describe('AnthropicModel', () => {
 
   describe('updateConfig', () => {
     it('merges new config with existing config', () => {
-      const provider = new AnthropicModel({ apiKey: 'sk-test', temperature: 0.5 })
+      const provider = new AnthropicModel({
+        apiKey: 'sk-test',
+        temperature: 0.5,
+        clientConfig: { dangerouslyAllowBrowser: isBrowser },
+      })
       provider.updateConfig({ temperature: 0.8, maxTokens: 8192 })
       expect(provider.getConfig()).toMatchObject({
         temperature: 0.8,
